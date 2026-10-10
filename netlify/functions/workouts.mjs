@@ -1,6 +1,7 @@
 import {getStore} from '@netlify/blobs';
 import {parseRows} from '../../lib/workouts.mjs';
 import {saveWorkout,SyncError} from '../../lib/sync.mjs';
+import {ensureIdColumn} from '../../lib/sheet-schema.mjs';
 const sheet='1PAyWq5qAPYNMYsmiV69kSh2nXmKw5IB9eB0eay4LMn4';
 const root=`https://sheets.googleapis.com/v4/spreadsheets/${sheet}/values/`;
 const range=encodeURIComponent("'Exercise Log'!A:I");
@@ -11,8 +12,8 @@ export default async function(request){
  if(origin&&origin!==new URL(request.url).origin)return json({error:'Origin not allowed.'},403);
  const authorization=request.headers.get('authorization');
  if(!authorization||!/^Bearer [^\s]+$/.test(authorization))return json({error:'Connect your Google account first.'},401);
- async function google(path,options={}){
-  const response=await fetch(root+path,{...options,headers:{Authorization:authorization,'Content-Type':'application/json'},signal:AbortSignal.timeout(15000)});
+ async function google(path,options={},base=root){
+  const response=await fetch(base+path,{...options,headers:{Authorization:authorization,'Content-Type':'application/json'},signal:AbortSignal.timeout(15000)});
   if(!response.ok){
    const detail=await response.json().catch(()=>({}));
    const reason=typeof detail.error?.message==='string'?detail.error.message.slice(0,500):'No error details supplied.';
@@ -31,7 +32,10 @@ export default async function(request){
   let workout;try{workout=JSON.parse(text);}catch{return json({error:'Invalid JSON.'},400);}
   const store=getStore({name:'stride-write-coordination',consistency:'strong'});
   const result=await saveWorkout({workout,read,store,
-   ensureHeader:()=>google(encodeURIComponent("'Exercise Log'!I1")+'?valueInputOption=RAW',{method:'PUT',body:JSON.stringify({values:[['Stride ID']]})}),
+   ensureHeader:async()=>{
+    await ensureIdColumn((path,options)=>google(path,options,`https://sheets.googleapis.com/v4/spreadsheets/${sheet}`));
+    await google(encodeURIComponent("'Exercise Log'!I1")+'?valueInputOption=RAW',{method:'PUT',body:JSON.stringify({values:[['Stride ID']]})});
+   },
    append:row=>google(range+':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS',{method:'POST',body:JSON.stringify({values:[row]})})
   });
   return json(result);
