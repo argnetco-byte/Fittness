@@ -13,7 +13,14 @@ export default async function(request){
  if(!authorization||!/^Bearer [^\s]+$/.test(authorization))return json({error:'Connect your Google account first.'},401);
  async function google(path,options={}){
   const response=await fetch(root+path,{...options,headers:{Authorization:authorization,'Content-Type':'application/json'},signal:AbortSignal.timeout(15000)});
-  if(!response.ok){if(response.status===401)throw new SyncError('Google connection expired. Reconnect to continue.',401);if(response.status===403)throw new SyncError('This Google account cannot access the private Sheet. Check account permissions and Sheets API setup.',403);throw new SyncError('Google Sheets could not complete the request. Refresh before retrying.',502);}
+  if(!response.ok){
+   const detail=await response.json().catch(()=>({}));
+   const reason=typeof detail.error?.message==='string'?detail.error.message.slice(0,500):'No error details supplied.';
+   const operation=options.method==='POST'?'save workout':options.method==='PUT'?'set the Stride ID header':'read workouts';
+   console.error('Google Sheets request failed',{operation,status:response.status});
+   if(response.status===401)throw new SyncError('Google connection expired. Reconnect to continue.',401);
+   throw new SyncError(`Google Sheets could not ${operation} (${response.status}): ${reason}`,response.status>=400&&response.status<500?response.status:502);
+  }
   return response.json();
  }
  const read=async()=>(await google(range+'?valueRenderOption=FORMATTED_VALUE')).values||[];
