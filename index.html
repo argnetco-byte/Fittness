@@ -1,0 +1,351 @@
+<!doctype html>
+
+<html lang="en">
+
+<head>
+
+<meta charset="utf-8">
+
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>Stride · Fitness tracker</title>
+
+<style>
+
+:root{font-family:system-ui,sans-serif;color:#eef2fa;background:#10141e}
+
+*{box-sizing:border-box}
+
+body{margin:0}
+
+main{max-width:1100px;margin:auto;padding:40px 24px}
+
+header{display:flex;justify-content:space-between;align-items:center}
+
+h1{font-size:36px;margin:0}
+
+h2{font-size:21px}
+
+p,.muted{color:#aab4c9}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+
+section{background:#1b2232;border:1px solid #30394c;border-radius:18px;padding:24px;margin-top:24px}
+
+label{display:block;margin:14px 0;font-size:14px}
+
+input,select,button{font:inherit;border-radius:9px;padding:11px}
+
+input,select{display:block;width:100%;margin-top:6px;color:#fff;background:#10141e;border:1px solid #46516a}
+
+button{cursor:pointer;border:0;background:#b9f568;color:#172508;font-weight:650}
+
+button.secondary{background:#303b51;color:white}
+
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #b9f568;outline-offset:3px}
+
+.row{display:flex;gap:12px;align-items:center;justify-content:space-between}
+
+.goal{padding:18px 0;border-bottom:1px solid #30394c}
+
+.goal:last-child{border:0}
+
+progress{width:100%;height:13px;accent-color:#b9f568;margin:12px 0}
+
+.stats{display:flex;gap:30px;margin-top:25px}
+
+.stats strong{display:block;font-size:30px;color:#b9f568}
+
+table{width:100%;border-collapse:collapse}
+
+td,th{text-align:left;padding:13px 8px;border-bottom:1px solid #30394c}
+
+.table-wrap{overflow:auto}
+
+svg{display:block;width:100%;height:auto}
+
+small{font-size:14px}
+
+#message{min-height:24px;color:#b9f568}
+
+@media(max-width:720px){.grid{grid-template-columns:1fr}main{padding:24px 16px}.stats{gap:20px}section{padding:18px}}
+
+</style>
+
+</head>
+
+<body>
+
+<main>
+
+<header><div><h1>Stride<span style="color:#b9f568">.</span></h1>
+
+<p>Your goals. Your pace.</p></div><span aria-hidden="true">◉</span></header>
+
+<div class="stats">
+
+<div><strong id="count">0</strong><small>Workouts logged</small></div>
+
+<div><strong id="minutes">0</strong><small>Total minutes</small></div>
+
+<div><strong id="completed">0</strong><small>Goals reached</small></div>
+
+</div>
+
+<p id="message" role="status"></p>
+
+<div class="grid">
+
+<section>
+
+<h2>Your goals</h2>
+
+<div id="goals"></div>
+
+<details><summary>Add a custom goal</summary>
+
+<form id="goalForm">
+
+<label>Goal name<input name="name" required maxlength="80" placeholder="Run 50 km"></label>
+
+<label>Track<select name="metric">
+
+<option value="sessions">Workout sessions</option>
+
+<option value="minutes">Workout minutes</option>
+
+<option value="distance">Distance in km</option>
+
+</select></label>
+
+<label>Workout type<select name="type">
+
+<option>All</option><option>Running</option><option>Walking</option>
+
+<option>Cycling</option><option>Strength</option><option>Yoga</option><option>Other</option>
+
+</select></label>
+
+<div class="grid" style="gap:12px">
+
+<label>Start date<input type="date" name="start" required></label>
+
+<label>End date<input type="date" name="end" required></label>
+
+</div>
+
+<label>Target<input type="number" name="target" min="0.1" step="0.1" required></label>
+
+<button>Create goal</button>
+
+</form>
+
+</details>
+
+</section>
+
+<section>
+
+<h2>Log a workout</h2>
+
+<form id="workoutForm">
+
+<label>Workout type<select name="type">
+
+<option>Running</option><option>Walking</option><option>Cycling</option>
+
+<option>Strength</option><option>Yoga</option><option>Other</option>
+
+</select></label>
+
+<label>Date<input type="date" name="date" required></label>
+
+<div class="grid" style="gap:12px">
+
+<label>Duration · minutes<input name="minutes" type="number" min="1" max="1440" required></label>
+
+<label>Distance · km<input name="distance" type="number" min="0" step="0.01" value="0" required></label>
+
+</div>
+
+<label>Notes<input name="notes" maxlength="200" placeholder="How did it feel?"></label>
+
+<button>Save workout</button>
+
+</form>
+
+</section>
+
+</div>
+
+<section>
+
+<div class="row"><h2>Activity over the last 7 days</h2><small class="muted">Minutes per day</small></div>
+
+<div id="chart"></div>
+
+</section>
+
+<section>
+
+<h2>Workout history</h2>
+
+<div class="table-wrap"><table>
+
+<thead><tr><th>Date</th><th>Workout</th><th>Minutes</th><th>Km</th><th>Notes</th><th></th></tr></thead>
+
+<tbody id="history"></tbody></table></div>
+
+<p id="empty" class="muted">Your first workout starts here. Log one above.</p>
+
+</section>
+
+</main>
+
+<script>
+
+const key='stride-fitness-v1';
+
+let state={goals:[],workouts:[]};
+
+try{
+
+ const saved=JSON.parse(localStorage.getItem(key));
+
+ if(saved && Array.isArray(saved.goals) && Array.isArray(saved.workouts)) state=saved;
+
+}catch{}
+
+const $=id=>document.getElementById(id);
+
+const dateKey=d=>${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')};
+
+const today=dateKey(new Date());
+
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+$('workoutForm').elements.date.value=today;
+
+$('workoutForm').elements.date.max=today;
+
+$('goalForm').elements.start.value=today;
+
+const end=new Date();end.setDate(end.getDate()+30);
+
+$('goalForm').elements.end.value=dateKey(end);
+
+function progress(g){
+
+ return state.workouts.filter(w=>w.date>=g.start && w.date<=g.end && (g.type==='All'||w.type===g.type))
+
+ .reduce((sum,w)=>sum+(g.metric==='sessions'?1:Number(w[g.metric])),0);
+
+}
+
+function save(message){
+
+ try{localStorage.setItem(key,JSON.stringify(state));$('message').textContent=message;}
+
+ catch{$('message').textContent='Browser storage is unavailable. Your changes will not survive closing this page.';}
+
+ render();
+
+}
+
+function render(){
+
+ $('count').textContent=state.workouts.length;
+
+ $('minutes').textContent=state.workouts.reduce((s,w)=>s+w.minutes,0);
+
+ $('completed').textContent=state.goals.filter(g=>progress(g)>=g.target).length;
+
+ $('goals').innerHTML=state.goals.map(g=>{
+
+ const n=progress(g),unit={sessions:'sessions',minutes:'minutes',distance:'km'}[g.metric];
+
+ return `<div class="goal"><div class="row"><strong>${esc(g.name)}</strong>
+
+ <button class="secondary" data-goal="${esc(g.id)}" aria-label="Delete ${esc(g.name)}">Delete</button></div>
+
+ <progress value="${Math.min(n,g.target)}" max="${g.target}" aria-label="${esc(g.name)} progress"></progress>
+
+ <div class="row"><small>${Number(n.toFixed(2))} / ${g.target} ${unit}</small><small>${Math.min(100,Math.round(n/g.target*100))}%</small></div>
+
+ <p><small>${esc(g.type)} · ${g.start} to ${g.end}</small></p></div>`;
+
+ }).join('')||'<p class="muted">Set a goal to give your next workout a direction.</p>';
+
+ $('history').innerHTML=[...state.workouts].sort((a,b)=>b.date.localeCompare(a.date)).map(w=>
+
+ `<tr><td>${w.date}</td><td>${esc(w.type)}</td><td>${w.minutes}</td><td>${w.distance}</td>
+
+ <td>${esc(w.notes)}</td><td><button class="secondary" data-workout="${esc(w.id)}" aria-label="Delete workout from ${w.date}">Delete</button></td></tr>`).join('');
+
+ $('empty').hidden=state.workouts.length>0;
+
+ const days=Array.from({length:7},(_,i)=>{const d=new Date();d.setDate(d.getDate()-6+i);return d;});
+
+ const totals=days.map(d=>state.workouts.filter(w=>w.date===dateKey(d)).reduce((s,w)=>s+w.minutes,0));
+
+ const max=Math.max(30,...totals);
+
+ $('chart').innerHTML=`<svg viewBox="0 0 700 230" role="img" aria-label="${esc(days.map((d,i)=>dateKey(d)+': '+totals[i]+' minutes').join(', '))}">
+
+ <line x1="0" y1="190" x2="700" y2="190" stroke="#46516a"/>
+
+ ${totals.map((n,i)=>{const h=n/max*140,x=i*100+27;return `<rect x="${x}" y="${190-h}" width="46" height="${h}" rx="5" fill="#b9f568"/>
+
+ <text x="${x+23}" y="${180-h}" text-anchor="middle" fill="#eef2fa" font-size="15">${n}</text>
+
+ <text x="${x+23}" y="220" text-anchor="middle" fill="#aab4c9" font-size="15">${days[i].toLocaleDateString(undefined,{weekday:'short'})}</text>;}).join('')}</svg>;
+
+}
+
+$('goalForm').onsubmit=e=>{
+
+ e.preventDefault();const f=e.target.elements;
+
+ if(f.end.value<f.start.value){$('message').textContent='End date must be on or after the start date.';return;}
+
+ state.goals.push({id:crypto.randomUUID(),name:f.name.value.trim()||'Fitness goal',metric:f.metric.value,type:f.type.value,start:f.start.value,end:f.end.value,target:Number(f.target.value)});
+
+ f.name.value='';f.target.value='';save('Goal created.');
+
+};
+
+$('workoutForm').onsubmit=e=>{
+
+ e.preventDefault();const f=e.target.elements;
+
+ state.workouts.push({id:crypto.randomUUID(),type:f.type.value,date:f.date.value,minutes:Number(f.minutes.value),distance:Number(f.distance.value),notes:f.notes.value.trim()});
+
+ f.minutes.value='';f.distance.value='0';f.notes.value='';save('Workout saved. Keep going!');
+
+};
+
+document.addEventListener('click',e=>{
+
+ const b=e.target.closest('button');if(!b)return;
+
+ if(b.dataset.goal && confirm('Delete this goal?')){
+
+ state.goals=state.goals.filter(g=>g.id!==b.dataset.goal);save('Goal deleted.');
+
+ }
+
+ if(b.dataset.workout && confirm('Delete this workout?')){
+
+ state.workouts=state.workouts.filter(w=>w.id!==b.dataset.workout);save('Workout deleted.');
+
+ }
+
+});
+
+render();
+
+</script>
+
+</body>
+
+</html>
