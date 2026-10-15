@@ -1,7 +1,9 @@
+import {weekDays,weekSummary} from './lib/dashboard.mjs';
 import {goalProgress,dailyTotals,fingerprint} from './lib/workouts.mjs';
 const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const localDate=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const today=localDate(new Date());let workouts=[],goals=[],token='',expires=0,clientId='',loaded=false,busy=false,generation=0,pending=null;
+let weekOffset=0;
 const fmt=v=>v===null||v===undefined?'—':Number(v.toFixed(2)).toLocaleString();
 function message(s,error=false){$('message').textContent=s;$('message').classList.toggle('error',error);}
 function persistGoals(){try{localStorage.setItem('stride-goals-v2',JSON.stringify(goals));}catch{message('Browser storage is unavailable. Goals will not survive closing this page.',true);}}
@@ -25,7 +27,7 @@ async function api(method='GET',body){
 async function load(){
  const epoch=generation;busy=true;controls();message('Loading Exercise Log…');
  try{const data=await api();if(epoch!==generation)return;workouts=data.workouts;loaded=true;$('connection').textContent=`Connected · refreshed ${new Date().toLocaleTimeString()}`;render();message(data.skipped?`Loaded ${workouts.length} workouts. ${data.skipped} invalid row(s) were skipped.`:`Loaded ${workouts.length} workouts.`);}
- catch(e){if(epoch===generation)message(e.message,true);}finally{busy=false;controls();}
+ catch(e){if(epoch===generation){if(loaded)$('connection').textContent='Refresh failed · showing previously loaded workouts';message(e.message,true);}}finally{busy=false;controls();}
 }
 $('connect').onclick=()=>{
  if(!window.google?.accounts?.oauth2){message('Google authorization is still loading. Try again.',true);return;}
@@ -46,17 +48,35 @@ $('workoutForm').onsubmit=async e=>{
  catch(e){if(epoch===generation)message(e.message,true);}finally{busy=false;controls();}
 };
 $('goals').onclick=e=>{const b=e.target.closest('[data-goal]');if(b&&confirm('Delete this goal?')){goals=goals.filter(g=>g.id!==b.dataset.goal);persistGoals();render();}};
+$('previousWeek').onclick=()=>{weekOffset--;render();};
+$('nextWeek').onclick=()=>{if(weekOffset<0)weekOffset++;render();};
+$('currentWeek').onclick=()=>{weekOffset=0;render();};
 $('period').onchange=render;$('metric').onchange=render;
 function render(){
- $('count').textContent=loaded?workouts.length:'—';$('minutes').textContent=loaded?fmt(workouts.reduce((n,w)=>n+w.minutes,0)):'—';$('distance').textContent=loaded?fmt(workouts.reduce((n,w)=>n+(w.distance||0),0)):'—';$('completed').textContent=loaded?goals.filter(g=>goalProgress(g,workouts)>=g.target).length:'—';
+ const selectedDays=weekDays(new Date(),weekOffset),summary=weekSummary(workouts,selectedDays);
+ const displayDate=d=>new Date(d+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+ $('weekTitle').textContent=weekOffset===0?'This week':'Weekly progress';
+ $('weekRange').textContent=displayDate(selectedDays[0])+' – '+displayDate(selectedDays[6]);
+ $('nextWeek').disabled=weekOffset===0;$('currentWeek').disabled=weekOffset===0;
+ for(const id of ['minutes','distance','strength','tennis'])$(id).textContent=loaded?fmt(summary[id]):'—';
+ $('count').textContent=loaded?summary.sessions:'—';
+ $('distanceNote').textContent=loaded&&summary.missingDistance?summary.missingDistance+' workouts have no recorded distance':'Recorded distances only';
+ $('completed').textContent=loaded?goals.filter(g=>goalProgress(g,workouts)>=g.target).length:'—';
  $('goals').innerHTML=goals.map(g=>{const n=goalProgress(g,workouts),unit={sessions:'sessions',minutes:'minutes',distance:'miles'}[g.metric];return `<div class="goal"><div class="row"><strong>${esc(g.name)}</strong><button class="secondary" data-goal="${esc(g.id)}">Delete</button></div><progress max="${Number(g.target)}" value="${Math.min(n,g.target)}" aria-label="${esc(g.name)} progress"></progress><div class="row"><small>${loaded?fmt(n):'Connect to see progress'} / ${Number(g.target)} ${unit}</small><small>${loaded?Math.min(100,Math.round(n/g.target*100))+'%':'—'}</small></div><p><small>${esc(g.type)} · ${esc(g.start)} to ${esc(g.end)}</small></p></div>`;}).join('')||'<p class="muted">Create a goal to track your next milestone.</p>';
  $('history').innerHTML=[...workouts].sort((a,b)=>b.date.localeCompare(a.date)).map(w=>`<tr><td>${esc(w.date)}</td><td>${esc(w.type)}</td><td>${fmt(w.minutes)}</td><td>${fmt(w.distance)}</td><td>${fmt(w.pace)}</td><td>${fmt(w.calories)}</td><td>${esc(w.source)}</td><td>${esc(w.notes)}</td></tr>`).join('');
+ $('historyCards').innerHTML=[...workouts].sort((a,b)=>b.date.localeCompare(a.date)).map(w=>`<article class="workout-card"><div class="row"><strong>${esc(w.type)}</strong><time datetime="${esc(w.date)}">${esc(w.date)}</time></div><p>${fmt(w.minutes)} min · ${w.distance===null?'Distance not recorded':fmt(w.distance)+' miles'}</p><details><summary>Workout details</summary><dl><dt>Pace</dt><dd>${fmt(w.pace)} min/mi</dd><dt>Calories</dt><dd>${fmt(w.calories)}</dd><dt>Source</dt><dd>${esc(w.source)||'—'}</dd><dt>Notes</dt><dd>${esc(w.notes)||'—'}</dd></dl></details></article>`).join('');
  $('empty').hidden=loaded&&workouts.length>0;$('empty').textContent=loaded?'No workouts in Exercise Log yet.':'Connect Google to load your workouts.';
- if(!loaded){$('chart').textContent='Connect Google to see your activity.';return;}
+ if(!loaded){$('chartRange').textContent='';$('chart').textContent='Connect Google to see your activity.';return;}
  const period=Number($('period').value),metric=$('metric').value;
- const days=Array.from({length:period},(_,i)=>{const d=new Date();d.setDate(d.getDate()-period+1+i);return localDate(d);});
- const totals=dailyTotals(workouts,days,metric),max=Math.max(1,...totals),width=700/period;
- $('chart').innerHTML=`<svg viewBox="0 0 700 240" role="img" aria-label="${esc(days.map((d,i)=>d+': '+totals[i]+' '+metric).join(', '))}"><line x1="0" y1="190" x2="700" y2="190" stroke="#46516a"/>${totals.map((n,i)=>{const h=n/max*140,x=i*width+width*.15;return `<rect x="${x}" y="${190-h}" width="${width*.7}" height="${h}" rx="3" fill="#b9f568"><title>${days[i]}: ${fmt(n)} ${metric}</title></rect>${period===7?`<text x="${x+width*.35}" y="${180-h}" text-anchor="middle" fill="#eef2fa" font-size="15">${fmt(n)}</text>`:''}${period===7||i%5===0?`<text x="${x+width*.35}" y="220" text-anchor="middle" fill="#aab4c9" font-size="13">${days[i].slice(5)}</text>`:''}`;}).join('')}</svg>`;
+ const days=period===7?selectedDays:Array.from({length:period},(_,i)=>{const d=new Date();d.setDate(d.getDate()-period+1+i);return localDate(d);});
+ $('chartRange').textContent=displayDate(days[0])+' – '+displayDate(days[days.length-1]);
+ const totals=dailyTotals(workouts,days,metric),max=Math.max(1,...totals);
+ $('chart').innerHTML=`<div class="bar-chart" role="img" aria-label="${esc(days.map((d,i)=>d+': '+fmt(totals[i])+' '+metric).join(', '))}">${totals.map((n,i)=>{
+ const level=Math.max(0,Math.min(100,Math.round(n/max*100)));
+ const label=new Date(days[i]+'T12:00:00').toLocaleDateString(undefined,{weekday:'short'});
+ return `<div class="bar-column"><span class="bar-value">${period===7?fmt(n):''}</span><div class="bar-track"><div class="bar-fill level-${level}"></div></div><span class="bar-label">${period===7?label:(i%5===0?days[i].slice(5):'')}</span></div>`;
+ }).join('')}</div><details class="chart-data"><summary>View daily values</summary><ul>${days.map((d,i)=>`<li>${d}: ${fmt(totals[i])} ${metric}</li>`).join('')}</ul></details>`;
+
 }
 render();
 try{const response=await fetch('/.netlify/functions/config',{cache:'no-store'});if(!response.ok)throw new Error();const config=await response.json();clientId=config.clientId;$('connection').textContent=clientId?'Connect Google to start':'Google connection needs site-owner setup.';if(!clientId)message('Google connection is not configured yet.',true);}catch{message('Connection setup could not load. Try refreshing the page.',true);}
